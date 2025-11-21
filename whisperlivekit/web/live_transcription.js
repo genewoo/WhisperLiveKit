@@ -232,10 +232,11 @@ function setupWebSocket() {
         if (waitingForStop) {
           statusText.textContent = "Processing finalized or connection closed.";
           if (lastReceivedData) {
-            renderLinesWithBuffer(
+          renderLinesWithBuffer(
               lastReceivedData.lines || [],
               lastReceivedData.buffer_diarization || "",
               lastReceivedData.buffer_transcription || "",
+              lastReceivedData.buffer_translation || "",
               0,
               0,
               true
@@ -281,6 +282,7 @@ function setupWebSocket() {
             lastReceivedData.lines || [],
             lastReceivedData.buffer_diarization || "",
             lastReceivedData.buffer_transcription || "",
+            lastReceivedData.buffer_translation || "",
             0,
             0,
             true
@@ -301,6 +303,7 @@ function setupWebSocket() {
         lines = [],
         buffer_transcription = "",
         buffer_diarization = "",
+        buffer_translation = "",
         remaining_time_transcription = 0,
         remaining_time_diarization = 0,
         status = "active_transcription",
@@ -310,6 +313,7 @@ function setupWebSocket() {
         lines,
         buffer_diarization,
         buffer_transcription,
+        buffer_translation,
         remaining_time_diarization,
         remaining_time_transcription,
         false,
@@ -323,6 +327,7 @@ function renderLinesWithBuffer(
   lines,
   buffer_diarization,
   buffer_transcription,
+  buffer_translation,
   remaining_time_diarization,
   remaining_time_transcription,
   isFinalizing = false,
@@ -341,6 +346,7 @@ function renderLinesWithBuffer(
     lines: (lines || []).map((it) => ({ speaker: it.speaker, text: it.text, start: it.start, end: it.end, detected_language: it.detected_language })),
     buffer_transcription: buffer_transcription || "",
     buffer_diarization: buffer_diarization || "",
+    buffer_translation: buffer_translation,
     status: current_status,
     showLoading,
     showTransLag,
@@ -385,12 +391,11 @@ function renderLinesWithBuffer(
 
       if (idx === lines.length - 1) {
         if (!isFinalizing && item.speaker !== -2) {
-          if (remaining_time_transcription > 0) {
             speakerLabel += `<span class="label_transcription"><span class="spinner"></span>Transcription lag <span id='timeInfo'><span class="lag-transcription-value">${fmt1(
               remaining_time_transcription
             )}</span>s</span></span>`;
-          }
-          if (buffer_diarization && remaining_time_diarization > 0) {
+
+          if (buffer_diarization && remaining_time_diarization) {
             speakerLabel += `<span class="label_diarization"><span class="spinner"></span>Diarization lag<span id='timeInfo'><span class="lag-diarization-value">${fmt1(
               remaining_time_diarization
             )}</span>s</span></span>`;
@@ -415,13 +420,22 @@ function renderLinesWithBuffer(
           }
         }
       }
-      
+      let translationContent = "";
       if (item.translation) {
+        translationContent += item.translation.trim();
+      }
+      if (idx === lines.length - 1 && buffer_translation) {
+        const bufferPiece = isFinalizing
+          ? buffer_translation
+          : `<span class="buffer_translation">${buffer_translation}</span>`;
+        translationContent += translationContent ? `${bufferPiece}` : bufferPiece;
+      }
+      if (translationContent.trim().length > 0) {
         currentLineText += `
             <div>
                 <div class="label_translation">
                     ${translationIcon}
-                    <span>${item.translation}</span>
+                    <span class="translation_text">${translationContent}</span>
                 </div>
             </div>`;
       }

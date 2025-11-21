@@ -45,7 +45,7 @@ pip install whisperlivekit
 #### Quick Start
 1. **Start the transcription server:**
    ```bash
-   whisperlivekit-server --model base --language en
+   wlk --model base --language en
    ```
 
 2. **Open your browser** and navigate to `http://localhost:8000`. Start speaking and watch your words appear in real-time!
@@ -53,6 +53,7 @@ pip install whisperlivekit
 
 > - See [tokenizer.py](https://github.com/QuentinFuxa/WhisperLiveKit/blob/main/whisperlivekit/simul_whisper/whisper/tokenizer.py) for the list of all available languages.
 > - For HTTPS requirements, see the **Parameters** section for SSL configuration options.
+> - The CLI entry point is exposed as both `wlk` and `whisperlivekit-server`; they are equivalent.
 
 #### Use it to capture audio from web pages.
 
@@ -68,13 +69,12 @@ Go to `chrome-extension` for instructions.
 
 | Optional | `pip install` |
 |-----------|-------------|
-| **Speaker diarization** | `git+https://github.com/NVIDIA/NeMo.git@main#egg=nemo_toolkit[asr]` |
+| **Windows/Linux optimizations** | `faster-whisper` |
 | **Apple Silicon optimizations** | `mlx-whisper` |
 | **Translation** | `nllw` |
+| **Speaker diarization** | `git+https://github.com/NVIDIA/NeMo.git@main#egg=nemo_toolkit[asr]` |
+| OpenAI API | `openai` |
 | *[Not recommanded]*  Speaker diarization with Diart | `diart` |
-| *[Not recommanded]*  Original Whisper backend | `whisper` |
-| *[Not recommanded]*  Improved timestamps backend | `whisper-timestamped` |
-| OpenAI API backend | `openai` |
 
 See  **Parameters & Configuration** below on how to use them.
 
@@ -86,10 +86,10 @@ See  **Parameters & Configuration** below on how to use them.
 
 ```bash
 # Large model and translate from french to danish
-whisperlivekit-server --model large-v3 --language fr --target-language da
+wlk --model large-v3 --language fr --target-language da
 
 # Diarization and server listening on */80 
-whisperlivekit-server --host 0.0.0.0 --port 80 --model medium --diarization --language fr
+wlk --host 0.0.0.0 --port 80 --model medium --diarization --language fr
 ```
 
 
@@ -140,12 +140,12 @@ async def websocket_endpoint(websocket: WebSocket):
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `--model` | Whisper model size. List and recommandations [here](https://github.com/QuentinFuxa/WhisperLiveKit/blob/main/docs/available_models.md) | `small` |
-| `--model-path` | .pt file/directory containing whisper model. Overrides `--model`. Recommandations [here](https://github.com/QuentinFuxa/WhisperLiveKit/blob/main/docs/models_compatible_formats.md) | `None` |
+| `--model-path` | Local .pt file/directory **or** Hugging Face repo ID containing the Whisper model. Overrides `--model`. Recommandations [here](https://github.com/QuentinFuxa/WhisperLiveKit/blob/main/docs/models_compatible_formats.md) | `None` |
 | `--language` | List [here](https://github.com/QuentinFuxa/WhisperLiveKit/blob/main/whisperlivekit/simul_whisper/whisper/tokenizer.py). If you use `auto`, the model attempts to detect the language automatically, but it tends to bias towards English. | `auto` |
-| `--target-language` | If sets, translate to using NLLB. Ex: `fr`. [200 languages available](https://github.com/QuentinFuxa/WhisperLiveKit/blob/main/docs/supported_languages.md). If you want to translate to english, you should rather use `--task translate`, since Whisper can do it directly. | `None` |
-| `--task` | Set to `translate` to translate *only* to english, using Whisper translation. | `transcribe` |
+| `--target-language` | If sets, translates using [NLLW](https://github.com/QuentinFuxa/NoLanguageLeftWaiting). [200 languages available](https://github.com/QuentinFuxa/WhisperLiveKit/blob/main/docs/supported_languages.md). If you want to translate to english, you can also use `--direct-english-translation`. The STT model will try to directly output the translation. | `None` |
 | `--diarization` | Enable speaker identification | `False` |
-| `--backend` | Processing backend. You can switch to `faster-whisper` if  `simulstreaming` does not work correctly | `simulstreaming` |
+| `--backend-policy` | Streaming strategy: `1`/`simulstreaming` uses AlignAtt SimulStreaming, `2`/`localagreement` uses the LocalAgreement policy | `simulstreaming` |
+| `--backend` | Whisper implementation selector. `auto` picks MLX on macOS (if installed), otherwise Faster-Whisper, otherwise vanilla Whisper. You can also force `mlx-whisper`, `faster-whisper`, `whisper`, or `openai-api` (LocalAgreement only) | `auto` |
 | `--no-vac` | Disable Voice Activity Controller | `False` |
 | `--no-vad` | Disable Voice Activity Detection | `False` |
 | `--warmup-file` | Audio file path for model warmup | `jfk.wav` |
@@ -171,7 +171,8 @@ async def websocket_endpoint(websocket: WebSocket):
 | SimulStreaming backend options | Description | Default |
 |-----------|-------------|---------|
 | `--disable-fast-encoder` | Disable Faster Whisper or MLX Whisper backends for the encoder (if installed). Inference can be slower but helpful when GPU memory is limited | `False` |
-| `--custom-alignment-heads` | Use your own alignment heads, useful when `--model-dir` is used | `None` |
+| `--custom-alignment-heads` | Use your own alignment heads, useful when `--model-dir` is used. Use `scripts/determine_alignment_heads.py` to extract them. <img src="scripts/alignment_heads.png" alt="WhisperLiveKit Demo" width="300">
+ | `None` |
 | `--frame-threshold` | AlignAtt frame threshold (lower = faster, higher = more accurate) | `25` |
 | `--beams` | Number of beams for beam search (1 = greedy decoding) | `1` |
 | `--decoder` | Force decoder type (`beam` or `greedy`) | `auto` |

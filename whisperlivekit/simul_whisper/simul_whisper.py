@@ -1,48 +1,57 @@
-# This code was originally in simul_whisper/transcriber/simul_whisper.py . It is adapted a lot for SimulStreaming.
-
 import os
 import logging
 
 import torch
 import torch.nn.functional as F
+import numpy as np
 
-from .whisper import load_model, DecodingOptions, tokenizer
+from whisperlivekit.whisper import DecodingOptions, tokenizer
 from .config import AlignAttConfig
 from whisperlivekit.timed_objects import ASRToken
-from .whisper.audio import log_mel_spectrogram, TOKENS_PER_SECOND, pad_or_trim, N_SAMPLES, N_FRAMES
-from .whisper.timing import median_filter
-from .whisper.decoding import GreedyDecoder, BeamSearchDecoder, SuppressTokens, detect_language
+from whisperlivekit.whisper.audio import log_mel_spectrogram, TOKENS_PER_SECOND, pad_or_trim, N_SAMPLES, N_FRAMES
+from whisperlivekit.whisper.timing import median_filter
+from whisperlivekit.whisper.decoding import GreedyDecoder, BeamSearchDecoder, SuppressTokens
 from .beam import BeamPyTorchInference
 from .eow_detection import fire_at_boundary, load_cif
 import os
 from time import time
 from .token_buffer import TokenBuffer
+from whisperlivekit.backend_support import (
+    mlx_backend_available,
+    faster_backend_available,
+)
 
-import numpy as np
 from ..timed_objects import PUNCTUATION_MARKS
-from .generation_progress import *
 
 DEC_PAD = 50257
 logger = logging.getLogger(__name__)
 
-
-try:
+if mlx_backend_available():
     from mlx_whisper.audio import log_mel_spectrogram as mlx_log_mel_spectrogram
     from mlx_whisper.transcribe import pad_or_trim as mlx_pad_or_trim
-    HAS_MLX_WHISPER = True
-except ImportError:
-    HAS_MLX_WHISPER = False
-if HAS_MLX_WHISPER:
-    HAS_FASTER_WHISPER = False
-else:
-    try:
-        from faster_whisper.audio import pad_or_trim as fw_pad_or_trim
-        from faster_whisper.feature_extractor import FeatureExtractor
-        HAS_FASTER_WHISPER = True
-    except ImportError:
-        HAS_FASTER_WHISPER = False
 
-class PaddedAlignAttWhisper:
+if faster_backend_available():
+    from faster_whisper.audio import pad_or_trim as fw_pad_or_trim
+    from faster_whisper.feature_extractor import FeatureExtractor
+
+USE_MLCORE = False
+
+
+def load_coreml_encoder():
+    try:
+        from coremltools.models import MLModel
+    except ImportError:
+        logger.warning("coremltools is not installed")
+        return None
+    COREML_ENCODER_PATH = os.environ.get("MLCORE_ENCODER_PATH", "whisperlivekit/whisper/whisper_encoder.mlpackage")
+    _coreml_encoder = MLModel(COREML_ENCODER_PATH)
+    spec = _coreml_encoder.get_spec()
+    _coreml_input_name = spec.description.input[0].name if spec.description.input else "mel"
+    _coreml_output_name = spec.description.output[0].name if spec.description.output else None
+    return _coreml_encoder, _coreml_input_name, _coreml_output_name
+
+
+class AlignAtt:
     def __init__(
             self, 
             cfg: AlignAttConfig,
@@ -54,9 +63,13 @@ class PaddedAlignAttWhisper:
         
         self.model = loaded_model
         self.mlx_encoder = mlx_encoder
-        self.fw_encoder = fw_encoder
+        self.fw_encoder = fw_encoder            
         if fw_encoder:
             self.fw_feature_extractor = FeatureExtractor(feature_size=self.model.dims.n_mels)
+        self.coreml_encoder_tuple = None
+        if USE_MLCORE:
+            self.coreml_encoder_tuple = load_coreml_encoder()
+        self.use_mlcore = self.coreml_encoder_tuple is not None
         
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
@@ -392,15 +405,28 @@ class PaddedAlignAttWhisper:
         else:
             input_segments = self.segments[0]
 
-        # if self.cfg.language == "auto" and self.reset_tokenizer_to_auto_next_call:
-        #     logger.debug("Resetting tokenizer to auto for new sentence.")
-        #     self.create_tokenizer(None)
-        #     self.detected_language = None
-        #     self.init_tokens()
-        #     self.reset_tokenizer_to_auto_next_call = False
-
-        # NEW : we can use a different encoder, before using standart whisper for cross attention with the hooks on the decoder
         beg_encode = time()
+        if self.use_mlcore:
+            coreml_encoder, coreml_input_name, coreml_output_name = self.coreml_encoder_tuple
+            mel_padded = log_mel_spectrogram(
+                input_segments,
+                n_mels=self.model.dims.n_mels,
+                padding=N_SAMPLES,
+                device="cpu",
+            ).unsqueeze(0)
+            mel = pad_or_trim(mel_padded, N_FRAMES)
+            content_mel_len = int((mel_padded.shape[2] - mel.shape[2]) / 2)
+            mel_np = np.ascontiguousarray(mel.numpy())
+            ml_inputs = {coreml_input_name or "mel": mel_np}
+            coreml_outputs = coreml_encoder.predict(ml_inputs)
+            if coreml_output_name and coreml_output_name in coreml_outputs:
+                encoder_feature_np = coreml_outputs[coreml_output_name]
+            else:
+                encoder_feature_np = next(iter(coreml_outputs.values()))
+            encoder_feature = torch.as_tensor(
+                np.array(encoder_feature_np),
+                device=self.device,
+            )
         if self.mlx_encoder:
             mlx_mel_padded = mlx_log_mel_spectrogram(audio=input_segments.detach(), n_mels=self.model.dims.n_mels, padding=N_SAMPLES)
             mlx_mel = mlx_pad_or_trim(mlx_mel_padded, N_FRAMES, axis=-2)

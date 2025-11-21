@@ -81,14 +81,14 @@ def parse_args():
     parser.add_argument(
         "--min-chunk-size",
         type=float,
-        default=0.5,
+        default=0.1,
         help="Minimum audio chunk size in seconds. It waits up to this time to do processing. If the processing takes shorter time, it waits, otherwise it processes the whole segment that was received by this time.",
     )
     
     parser.add_argument(
         "--model",
         type=str,
-        default="small",
+        default="base",
         dest='model_size',
         help="Name size of the Whisper model to use (default: tiny). Suggested values: tiny.en,tiny,base.en,base,small.en,small,medium.en,medium,large-v1,large-v2,large-v3,large,large-v3-turbo. The model is automatically downloaded from the model hub if not present in model cache dir.",
     )
@@ -114,11 +114,10 @@ def parse_args():
         help="Source language code, e.g. en,de,cs, or 'auto' for language detection.",
     )
     parser.add_argument(
-        "--task",
-        type=str,
-        default="transcribe",
-        choices=["transcribe", "translate"],
-        help="Transcribe or translate.",
+        "--direct-english-translation",
+        action="store_true",
+        default=False,
+        help="Use Whisper to directly translate to english.",
     )
     
     parser.add_argument(
@@ -130,11 +129,18 @@ def parse_args():
     )    
 
     parser.add_argument(
-        "--backend",
+        "--backend-policy",
         type=str,
         default="simulstreaming",
-        choices=["faster-whisper", "whisper_timestamped", "mlx-whisper", "openai-api", "simulstreaming"],
-        help="Load only this backend for Whisper processing.",
+        choices=["1", "2", "simulstreaming", "localagreement"],
+        help="Select the streaming policy: 1 or 'simulstreaming' for AlignAtt, 2 or 'localagreement' for LocalAgreement.",
+    )
+    parser.add_argument(
+        "--backend",
+        type=str,
+        default="auto",
+        choices=["auto", "mlx-whisper", "faster-whisper", "whisper", "openai-api"],
+        help="Select the Whisper backend implementation (auto: prefer MLX on macOS, otherwise Faster-Whisper, else Whisper). Use 'openai-api' with --backend-policy localagreement to call OpenAI's API.",
     )
     parser.add_argument(
         "--no-vac",
@@ -317,5 +323,10 @@ def parse_args():
     args.vad = not args.no_vad    
     delattr(args, 'no_transcription')
     delattr(args, 'no_vad')
+
+    if args.backend_policy == "1":
+        args.backend_policy = "simulstreaming"
+    elif args.backend_policy == "2":
+        args.backend_policy = "localagreement"
     
     return args
